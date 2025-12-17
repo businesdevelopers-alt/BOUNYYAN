@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, MessageSquare, ShieldCheck, Settings, Bell, Search, PlusCircle, ArrowLeft } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, ShieldCheck, Settings, Bell, Search, PlusCircle, ArrowLeft, LogOut } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import ComplianceReport from './components/ComplianceReport';
 import ChatInterface from './components/ChatInterface';
+import LandingPage from './components/LandingPage';
+import LoginPage from './components/LoginPage';
+import SignUpPage from './components/SignUpPage';
 import { AnalysisReport, ViewState } from './types';
 import { analyzeDrawingImage } from './services/geminiService';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<ViewState>('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [view, setView] = useState<ViewState>('landing');
+  
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -41,6 +46,17 @@ const App: React.FC = () => {
     setIsChatOpen(true);
   };
 
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    setView('dashboard');
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setAnalysisReport(null);
+    setView('landing');
+  };
+
   const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
     <button
       onClick={onClick}
@@ -54,6 +70,14 @@ const App: React.FC = () => {
     </button>
   );
 
+  // If not authenticated, show public pages
+  if (!isAuthenticated) {
+    if (view === 'login') return <LoginPage onNavigate={setView} onLogin={handleLogin} />;
+    if (view === 'signup') return <SignUpPage onNavigate={setView} onRegister={handleLogin} />;
+    return <LandingPage onNavigate={setView} />;
+  }
+
+  // Authenticated Layout
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
       {/* Sidebar */}
@@ -102,6 +126,7 @@ const App: React.FC = () => {
             onClick={() => setIsChatOpen(true)}
           />
           <SidebarItem icon={Settings} label="Settings" active={false} onClick={() => {}} />
+          <SidebarItem icon={LogOut} label="Sign Out" active={false} onClick={handleLogout} />
         </div>
       </aside>
 

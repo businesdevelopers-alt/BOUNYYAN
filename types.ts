@@ -32,4 +32,4 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
-export type ViewState = 'dashboard' | 'upload' | 'report' | 'chat';
+export type ViewState = 'landing' | 'login' | 'signup' | 'dashboard' | 'upload' | 'report' | 'chat';

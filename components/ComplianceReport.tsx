@@ -1,7 +1,9 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { AnalysisReport, ComplianceFinding, ComplianceStatus } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Info, FileText, ChevronRight, Download, List, Eye, EyeOff, Maximize2, Search, Filter, Layers, X, Loader2, Check } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Info, FileText, ChevronRight, Download, List, Eye, EyeOff, Maximize2, Search, Filter, Layers, X, Loader2, Check, MessageSquare } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface ComplianceReportProps {
   report: AnalysisReport;
@@ -43,7 +45,7 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
   const [exportConfig, setExportConfig] = useState({
     orientation: 'portrait' as 'portrait' | 'landscape',
     includeSummary: true,
-    includeCharts: true,
+    includeCharts: true, // Note: Charts in PDF is complex, we might just list stats or skip actual chart rendering for this version
     includeBoundingBoxes: false,
   });
   const [exportCategories, setExportCategories] = useState<string[]>([]);
@@ -129,12 +131,150 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
 
   const handleDownload = () => {
     setIsDownloading(true);
-    // Simulate generation delay
-    setTimeout(() => {
-      setIsDownloading(false);
-      setIsExportModalOpen(false);
-      alert(`PDF Report (${exportConfig.orientation}) generated successfully!\nIncludes:\n- ${exportConfig.includeSummary ? 'Summary' : ''}\n- ${exportConfig.includeCharts ? 'Charts' : ''}\n- ${exportConfig.includeBoundingBoxes ? 'Bounding Box Data' : ''}\n\nFilters:\n- Categories: ${exportCategories.length}/${allCategories.length}\n- Statuses: ${exportStatuses.length} selected`);
-    }, 1500);
+
+    try {
+        const doc = new jsPDF({
+            orientation: exportConfig.orientation,
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        // Title Section
+        doc.setFontSize(22);
+        doc.setTextColor(15, 23, 42); // Slate 900
+        doc.text("Compliance Report", 14, 20);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Project File: ${report.fileName}`, 14, 28);
+        doc.text(`Scan Date: ${new Date(report.scanDate).toLocaleDateString()} ${new Date(report.scanDate).toLocaleTimeString()}`, 14, 33);
+        
+        // Score Badge
+        doc.setFillColor(report.overallScore >= 80 ? 34 : (report.overallScore >= 50 ? 245 : 239), report.overallScore >= 80 ? 197 : (report.overallScore >= 50 ? 158 : 68), report.overallScore >= 80 ? 94 : (report.overallScore >= 50 ? 11 : 68));
+        doc.roundedRect(160, 12, 35, 15, 2, 2, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(16);
+        doc.text(`${report.overallScore}/100`, 177.5, 21, { align: 'center' });
+        doc.setFontSize(8);
+        doc.text("COMPLIANCE SCORE", 177.5, 25, { align: 'center' });
+
+        let yPos = 45;
+
+        // Executive Summary
+        if (exportConfig.includeSummary) {
+            doc.setFontSize(14);
+            doc.setTextColor(15, 23, 42);
+            doc.text("Executive Summary", 14, yPos);
+            yPos += 8;
+            
+            doc.setFontSize(10);
+            doc.setTextColor(51, 65, 85); // Slate 700
+            const splitSummary = doc.splitTextToSize(report.summary, 180);
+            doc.text(splitSummary, 14, yPos);
+            yPos += (splitSummary.length * 5) + 10;
+        }
+
+        // Stats Row (Simple representation of charts)
+        if (exportConfig.includeCharts) {
+             doc.setFontSize(14);
+             doc.setTextColor(15, 23, 42);
+             doc.text("Statistics", 14, yPos);
+             yPos += 8;
+
+             const statsY = yPos;
+             // Pass
+             doc.setFillColor(220, 252, 231); doc.rect(14, statsY, 50, 20, 'F');
+             doc.setTextColor(22, 163, 74); doc.setFontSize(12); doc.text(`${stats.pass} PASSED`, 39, statsY + 13, {align: 'center'});
+             
+             // Warning
+             doc.setFillColor(254, 243, 199); doc.rect(74, statsY, 50, 20, 'F');
+             doc.setTextColor(217, 119, 6); doc.text(`${stats.warning} WARNINGS`, 99, statsY + 13, {align: 'center'});
+             
+             // Fail
+             doc.setFillColor(254, 226, 226); doc.rect(134, statsY, 50, 20, 'F');
+             doc.setTextColor(220, 38, 38); doc.text(`${stats.fail} FAILED`, 159, statsY + 13, {align: 'center'});
+             
+             yPos += 30;
+        }
+
+        // Findings Table
+        doc.setFontSize(14);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Detailed Findings", 14, yPos);
+        yPos += 5;
+
+        // Prepare Data
+        const filteredFindings = report.findings.filter(f => 
+            exportStatuses.includes(f.status) && 
+            (f.category ? exportCategories.includes(f.category) : true)
+        ).sort((a,b) => {
+             const order = { [ComplianceStatus.FAIL]: 0, [ComplianceStatus.WARNING]: 1, [ComplianceStatus.NEEDS_CLARIFICATION]: 2, [ComplianceStatus.PASS]: 3 };
+             return order[a.status] - order[b.status];
+        });
+
+        const tableHeaders = ['Status', 'Category', 'Description', 'Reference', 'Action'];
+        if (exportConfig.includeBoundingBoxes) {
+            tableHeaders.push('Bounds (y1,x1,y2,x2)');
+        }
+
+        const tableBody = filteredFindings.map(f => {
+            const row = [
+                f.status,
+                f.category || 'General',
+                f.description,
+                f.reference,
+                f.recommendation
+            ];
+            if (exportConfig.includeBoundingBoxes) {
+                row.push(f.boundingBox ? f.boundingBox.map(n => n.toFixed(3)).join(',') : '-');
+            }
+            return row;
+        });
+
+        autoTable(doc, {
+            startY: yPos,
+            head: [tableHeaders],
+            body: tableBody,
+            theme: 'grid',
+            headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+            styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+            columnStyles: {
+                0: { cellWidth: 20, fontStyle: 'bold' },
+                1: { cellWidth: 25 },
+                2: { cellWidth: 'auto' },
+                3: { cellWidth: 25 },
+                4: { cellWidth: 40 },
+                5: { cellWidth: 25 }
+            },
+            didParseCell: function(data) {
+                if (data.section === 'body' && data.column.index === 0) {
+                    const status = data.cell.raw;
+                    if (status === ComplianceStatus.FAIL) data.cell.styles.textColor = [220, 38, 38];
+                    if (status === ComplianceStatus.WARNING) data.cell.styles.textColor = [217, 119, 6];
+                    if (status === ComplianceStatus.PASS) data.cell.styles.textColor = [22, 163, 74];
+                }
+            }
+        });
+
+        // Add Footer page numbers
+        const pageCount = doc.internal.pages.length - 1; // jsPDF adds one empty page sometimes or 1-based index? no, standard check
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            doc.text(`Page ${i} of ${pageCount}`, 196, 285, { align: 'right' });
+            doc.text(`Generated by SaudiCode Validator AI`, 14, 285);
+        }
+
+        doc.save(`Compliance_Report_${report.fileName.replace(/\.[^/.]+$/, "")}.pdf`);
+        setIsExportModalOpen(false);
+
+    } catch (error) {
+        console.error("PDF Generation Error:", error);
+        alert("Failed to generate PDF. Please try again.");
+    } finally {
+        setIsDownloading(false);
+    }
   };
 
   // Process findings: Filter -> Sort -> Group
@@ -392,26 +532,29 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                         
                         <h4 className="font-medium text-slate-900 text-sm mb-2">{finding.description}</h4>
                         
-                        <div className="flex flex-wrap gap-2 mb-3">
+                        <div className="flex items-center justify-between mb-2">
                           <span className="inline-flex items-center text-[10px] text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-200">
                             <FileText className="w-3 h-3 mr-1" /> {finding.reference}
                           </span>
+
+                          <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onConsult(`Regarding the finding "${finding.description}" (Ref: ${finding.reference}): ${finding.recommendation}. Can you explain?`);
+                            }}
+                            className="flex items-center gap-1.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 px-2 py-1 rounded transition-colors border border-transparent hover:border-blue-100"
+                            title="Ask AI about this finding"
+                          >
+                             <MessageSquare className="w-3 h-3" />
+                             Consult AI
+                          </button>
                         </div>
 
                         {activeFindingId === finding.id && (
-                          <div className="animate-fadeIn">
-                             <p className="text-slate-600 text-xs mb-3 bg-slate-50 p-2 rounded border border-slate-100">
+                          <div className="animate-fadeIn mt-3 pt-3 border-t border-slate-100">
+                             <p className="text-slate-600 text-xs bg-slate-50 p-2 rounded border border-slate-100">
                                 <span className="font-semibold text-slate-700">Fix:</span> {finding.recommendation}
                              </p>
-                             <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onConsult(`Regarding the finding "${finding.description}" (Ref: ${finding.reference}): ${finding.recommendation}. Can you explain?`);
-                                }}
-                                className="text-blue-600 text-xs font-medium hover:text-blue-800 flex items-center"
-                              >
-                                Consult AI <ChevronRight className="w-3 h-3 ml-1" />
-                              </button>
                           </div>
                         )}
                       </div>
@@ -558,7 +701,10 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                               <g 
                                 key={finding.id} 
                                 className="pointer-events-auto cursor-pointer" 
-                                onClick={() => handleFindingClick(finding.id)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleFindingClick(finding.id);
+                                }}
                                 onMouseEnter={() => setHoveredFindingId(finding.id)}
                                 onMouseLeave={() => setHoveredFindingId(null)}
                               >
@@ -567,23 +713,24 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                                   y={`${y}%`}
                                   width={`${width}%`}
                                   height={`${height}%`}
-                                  fill={isActive || isHovered ? color : 'transparent'}
-                                  fillOpacity={isActive || isHovered ? 0.2 : 0}
+                                  fill={isActive ? color : 'transparent'}
+                                  fillOpacity={isActive ? 0.35 : (isHovered ? 0.1 : 0)}
                                   stroke={color}
-                                  strokeWidth={isActive || isHovered ? 2 : 0.5}
+                                  strokeWidth={isActive ? 3 : (isHovered ? 2 : 1)}
                                   vectorEffect="non-scaling-stroke"
-                                  className="transition-all duration-200 hover:stroke-[1px] hover:fill-opacity-10"
+                                  className={`transition-all duration-300 ease-out`}
                                 />
                                 {isActive && (
                                    <rect
-                                     x={`${x - 1}%`}
-                                     y={`${y - 1}%`}
-                                     width={`${width + 2}%`}
-                                     height={`${height + 2}%`}
+                                     x={`${x}%`}
+                                     y={`${y}%`}
+                                     width={`${width}%`}
+                                     height={`${height}%`}
                                      fill="none"
                                      stroke={color}
-                                     strokeWidth={0.5}
-                                     strokeDasharray="2"
+                                     strokeWidth={2}
+                                     strokeDasharray="4 4"
+                                     vectorEffect="non-scaling-stroke"
                                      className="animate-pulse"
                                    />
                                 )}
