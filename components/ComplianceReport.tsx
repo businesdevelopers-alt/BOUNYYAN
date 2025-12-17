@@ -105,7 +105,7 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
     setTimeout(() => {
       setIsDownloading(false);
       setIsExportModalOpen(false);
-      alert(`PDF Report (${exportConfig.orientation}) generated successfully!\nIncludes: ${exportConfig.includeSummary ? 'Summary, ' : ''}${exportCategories.length} Categories.`);
+      alert(`PDF Report (${exportConfig.orientation}) generated successfully!\nIncludes: ${exportConfig.includeSummary ? 'Summary, ' : ''}${exportConfig.includeCharts ? 'Charts, ' : ''}${exportCategories.length} Categories.`);
     }, 1500);
   };
 
@@ -665,3 +665,12 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                   {isDownloading ? <Loader2 className="animate-spin w-4 h-4"/> : <Download className="w-4 h-4"/>}
                   {isDownloading ? 'Generating...' : 'Download PDF'}
                </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ComplianceReport;
