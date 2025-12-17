@@ -21,6 +21,7 @@ type SortOption = 'SEVERITY' | 'REFERENCE' | 'CATEGORY';
 
 const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }) => {
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
+  const [hoveredFindingId, setHoveredFindingId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<ComplianceStatus | 'ALL'>('ALL');
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('SEVERITY');
@@ -31,6 +32,11 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
   const [showBaseLayer, setShowBaseLayer] = useState(true);
   const layerMenuRef = useRef<HTMLDivElement>(null);
 
+  // Drawing Search State
+  const [drawingSearch, setDrawingSearch] = useState('');
+  const [isDrawingSearchExpanded, setIsDrawingSearchExpanded] = useState(false);
+  const drawingSearchInputRef = useRef<HTMLInputElement>(null);
+
   // Export State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -38,8 +44,15 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
     orientation: 'portrait' as 'portrait' | 'landscape',
     includeSummary: true,
     includeCharts: true,
+    includeBoundingBoxes: false,
   });
   const [exportCategories, setExportCategories] = useState<string[]>([]);
+  const [exportStatuses, setExportStatuses] = useState<ComplianceStatus[]>([
+    ComplianceStatus.FAIL,
+    ComplianceStatus.WARNING,
+    ComplianceStatus.NEEDS_CLARIFICATION,
+    ComplianceStatus.PASS
+  ]);
 
   const stats = {
     pass: report.findings.filter(f => f.status === ComplianceStatus.PASS).length,
@@ -82,6 +95,13 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
     };
   }, [showLayerMenu]);
 
+  // Focus drawing search input when expanded
+  useEffect(() => {
+    if (isDrawingSearchExpanded && drawingSearchInputRef.current) {
+        drawingSearchInputRef.current.focus();
+    }
+  }, [isDrawingSearchExpanded]);
+
   const toggleLayer = (category: string) => {
     setHiddenLayers(prev => {
       const next = new Set(prev);
@@ -99,13 +119,21 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
     );
   };
 
+  const toggleExportStatus = (status: ComplianceStatus) => {
+    setExportStatuses(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status) 
+        : [...prev, status]
+    );
+  };
+
   const handleDownload = () => {
     setIsDownloading(true);
     // Simulate generation delay
     setTimeout(() => {
       setIsDownloading(false);
       setIsExportModalOpen(false);
-      alert(`PDF Report (${exportConfig.orientation}) generated successfully!\nIncludes: ${exportConfig.includeSummary ? 'Summary, ' : ''}${exportConfig.includeCharts ? 'Charts, ' : ''}${exportCategories.length} Categories.`);
+      alert(`PDF Report (${exportConfig.orientation}) generated successfully!\nIncludes:\n- ${exportConfig.includeSummary ? 'Summary' : ''}\n- ${exportConfig.includeCharts ? 'Charts' : ''}\n- ${exportConfig.includeBoundingBoxes ? 'Bounding Box Data' : ''}\n\nFilters:\n- Categories: ${exportCategories.length}/${allCategories.length}\n- Statuses: ${exportStatuses.length} selected`);
     }, 1500);
   };
 
@@ -146,6 +174,22 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
 
     return result;
   }, [report.findings, filterStatus, searchText, sortBy]);
+
+  // Findings specifically for the drawing visualization (includes drawing specific search + hidden layers)
+  const visibleDrawingFindings = useMemo(() => {
+    return processedFindings.filter(f => {
+      if (!f.boundingBox) return false;
+      if (hiddenLayers.has(f.category || 'General')) return false;
+      
+      if (drawingSearch.trim()) {
+        const term = drawingSearch.toLowerCase();
+        return f.description.toLowerCase().includes(term) || 
+               f.reference.toLowerCase().includes(term) || 
+               (f.category && f.category.toLowerCase().includes(term));
+      }
+      return true;
+    });
+  }, [processedFindings, hiddenLayers, drawingSearch]);
 
   // Group the processed findings
   const groupedFindings = useMemo(() => {
@@ -388,6 +432,39 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                   </h3>
                   
                   <div className="flex items-center gap-2">
+                    {/* Drawing Search */}
+                    <div className={`relative transition-all duration-300 ease-in-out ${isDrawingSearchExpanded ? 'w-48' : 'w-8'}`}>
+                        <div className="absolute inset-y-0 left-0 flex items-center justify-center w-8 pointer-events-none z-10">
+                            <Search className={`w-4 h-4 ${isDrawingSearchExpanded ? 'text-blue-500' : 'text-slate-400'}`} />
+                        </div>
+                        {isDrawingSearchExpanded ? (
+                            <input 
+                                ref={drawingSearchInputRef}
+                                type="text"
+                                value={drawingSearch}
+                                onChange={(e) => setDrawingSearch(e.target.value)}
+                                placeholder="Search drawing..."
+                                className="w-full pl-9 pr-7 py-1.5 text-xs bg-white border border-blue-200 rounded-md focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none shadow-sm"
+                                onBlur={() => !drawingSearch && setIsDrawingSearchExpanded(false)}
+                            />
+                        ) : (
+                            <button 
+                                onClick={() => setIsDrawingSearchExpanded(true)}
+                                className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-md transition-colors"
+                                title="Search within drawing"
+                            >
+                            </button>
+                        )}
+                        {isDrawingSearchExpanded && drawingSearch && (
+                            <button 
+                                onClick={() => { setDrawingSearch(''); drawingSearchInputRef.current?.focus(); }}
+                                className="absolute inset-y-0 right-0 flex items-center pr-2 text-slate-400 hover:text-slate-600 cursor-pointer z-20"
+                            >
+                                <X className="w-3 h-3" />
+                            </button>
+                        )}
+                    </div>
+
                     {/* Layer Toggle */}
                     <div className="relative" ref={layerMenuRef}>
                       <button
@@ -400,7 +477,17 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
 
                       {showLayerMenu && (
                         <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 z-30 p-2 animate-in fade-in zoom-in-95 duration-200">
-                            <div className="text-xs font-semibold text-slate-500 px-2 py-1 mb-1">Drawing Layers</div>
+                            <div className="flex items-center justify-between px-2 py-1 mb-1">
+                                <div className="text-xs font-semibold text-slate-500">Drawing Layers</div>
+                                {(hiddenLayers.size > 0 || !showBaseLayer) && (
+                                    <button 
+                                        onClick={() => { setHiddenLayers(new Set()); setShowBaseLayer(true); }}
+                                        className="text-[10px] text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                                    >
+                                        Reset
+                                    </button>
+                                )}
+                            </div>
                             
                             {/* Base Layer Toggle */}
                             <button 
@@ -455,10 +542,7 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                        
                        {/* SVG Overlay */}
                        <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-                          {processedFindings.map((finding) => {
-                            // Check if category layer is hidden
-                            if (hiddenLayers.has(finding.category || 'General')) return null;
-
+                          {visibleDrawingFindings.map((finding) => {
                             if (!finding.boundingBox) return null;
                             const [ymin, xmin, ymax, xmax] = finding.boundingBox;
                             const width = (xmax - xmin) * 100;
@@ -467,19 +551,26 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                             const y = ymin * 100;
 
                             const isActive = activeFindingId === finding.id;
+                            const isHovered = hoveredFindingId === finding.id;
                             const color = finding.status === ComplianceStatus.PASS ? '#22c55e' : finding.status === ComplianceStatus.FAIL ? '#ef4444' : '#f59e0b';
 
                             return (
-                              <g key={finding.id} className="pointer-events-auto cursor-pointer" onClick={() => handleFindingClick(finding.id)}>
+                              <g 
+                                key={finding.id} 
+                                className="pointer-events-auto cursor-pointer" 
+                                onClick={() => handleFindingClick(finding.id)}
+                                onMouseEnter={() => setHoveredFindingId(finding.id)}
+                                onMouseLeave={() => setHoveredFindingId(null)}
+                              >
                                 <rect
                                   x={`${x}%`}
                                   y={`${y}%`}
                                   width={`${width}%`}
                                   height={`${height}%`}
-                                  fill={isActive ? color : 'transparent'}
-                                  fillOpacity={isActive ? 0.2 : 0}
+                                  fill={isActive || isHovered ? color : 'transparent'}
+                                  fillOpacity={isActive || isHovered ? 0.2 : 0}
                                   stroke={color}
-                                  strokeWidth={isActive ? 1 : 0.5}
+                                  strokeWidth={isActive || isHovered ? 2 : 0.5}
                                   vectorEffect="non-scaling-stroke"
                                   className="transition-all duration-200 hover:stroke-[1px] hover:fill-opacity-10"
                                 />
@@ -502,9 +593,11 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                        </svg>
 
                        {/* Tooltip Overlay */}
-                       {processedFindings.map((finding) => {
-                          if (hiddenLayers.has(finding.category || 'General')) return null;
-                          if (finding.id !== activeFindingId || !finding.boundingBox) return null;
+                       {visibleDrawingFindings.map((finding) => {
+                          const isActive = activeFindingId === finding.id;
+                          const isHovered = hoveredFindingId === finding.id;
+
+                          if ((!isActive && !isHovered) || !finding.boundingBox) return null;
                           
                           const [ymin, xmin] = finding.boundingBox;
                           const topVal = ymin * 100;
@@ -514,7 +607,7 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                           return (
                             <div
                               key={`tooltip-${finding.id}`}
-                              className="absolute z-20 bg-white rounded-lg shadow-xl border border-slate-200 p-3 w-64 animate-in fade-in zoom-in-95 duration-200"
+                              className="absolute z-20 bg-white rounded-lg shadow-xl border border-slate-200 p-3 w-64 animate-in fade-in zoom-in-95 duration-200 pointer-events-none"
                               style={{
                                 top: `${topVal}%`,
                                 left: `${leftVal}%`,
@@ -547,7 +640,7 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                </div>
                <div className="p-3 bg-slate-50 text-xs text-slate-500 border-t border-slate-100 flex justify-between rounded-b-xl">
                   <span>Click boxes to view details</span>
-                  <span>{processedFindings.filter(f => f.boundingBox && !hiddenLayers.has(f.category || 'General')).length} zones visible</span>
+                  <span>{visibleDrawingFindings.length} zones visible</span>
                </div>
             </div>
           </div>
@@ -595,9 +688,9 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                 </div>
               </section>
 
-              {/* Sections */}
+              {/* Report Content Options */}
               <section>
-                <label className="text-sm font-bold text-slate-800 block mb-3">Include Sections</label>
+                <label className="text-sm font-bold text-slate-800 block mb-3">Report Content</label>
                 <div className="space-y-3 bg-white">
                    <button 
                     onClick={() => setExportConfig(c => ({...c, includeSummary: !c.includeSummary}))}
@@ -618,33 +711,72 @@ const ComplianceReport: React.FC<ComplianceReportProps> = ({ report, onConsult }
                       </div>
                       <span className="text-sm font-medium text-slate-700">Visualizations & Charts</span>
                    </button>
-                   
-                   <div className="pt-2">
-                     <div className="flex items-center justify-between mb-2 px-1">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Detailed Findings</span>
-                        <button 
-                            onClick={() => setExportCategories(exportCategories.length === allCategories.length ? [] : allCategories)}
-                            className="text-xs text-blue-600 hover:underline"
-                        >
-                            {exportCategories.length === allCategories.length ? 'Deselect All' : 'Select All'}
-                        </button>
-                     </div>
-                     <div className="max-h-40 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                        {allCategories.map(cat => (
-                           <button 
-                            key={cat}
-                            onClick={() => toggleExportCategory(cat)}
-                            className="flex items-center w-full p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors text-left"
-                           >
-                              <div className={`w-4 h-4 rounded border flex items-center justify-center mr-3 flex-shrink-0 transition-colors ${exportCategories.includes(cat) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                                  {exportCategories.includes(cat) && <Check className="w-3 h-3 text-white" />}
-                              </div>
-                              <span className="text-sm text-slate-600 truncate">{cat}</span>
-                           </button>
-                        ))}
-                     </div>
-                   </div>
+
+                   <button 
+                    onClick={() => setExportConfig(c => ({...c, includeBoundingBoxes: !c.includeBoundingBoxes}))}
+                    className="flex items-center w-full p-3 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+                   >
+                      <div className={`w-5 h-5 rounded border flex items-center justify-center mr-3 transition-colors ${exportConfig.includeBoundingBoxes ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                          {exportConfig.includeBoundingBoxes && <Check className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                      <span className="text-sm font-medium text-slate-700">Include Bounding Box Coordinates</span>
+                   </button>
                 </div>
+              </section>
+
+              {/* Status Filter */}
+              <section>
+                 <label className="text-sm font-bold text-slate-800 block mb-3">Filter by Status</label>
+                 <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { id: ComplianceStatus.FAIL, label: 'Fail', color: 'text-red-700 bg-red-50 border-red-200' },
+                      { id: ComplianceStatus.WARNING, label: 'Warning', color: 'text-amber-700 bg-amber-50 border-amber-200' },
+                      { id: ComplianceStatus.NEEDS_CLARIFICATION, label: 'Info', color: 'text-blue-700 bg-blue-50 border-blue-200' },
+                      { id: ComplianceStatus.PASS, label: 'Pass', color: 'text-green-700 bg-green-50 border-green-200' },
+                    ].map(status => (
+                        <button
+                          key={status.id}
+                          onClick={() => toggleExportStatus(status.id)}
+                          className={`flex items-center p-2 rounded-lg border transition-all ${
+                             exportStatuses.includes(status.id) 
+                             ? `${status.color} ring-1 ring-current border-transparent` 
+                             : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                          }`}
+                        >
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center mr-2 flex-shrink-0 bg-white ${exportStatuses.includes(status.id) ? 'border-current' : 'border-slate-300'}`}>
+                                {exportStatuses.includes(status.id) && <Check className="w-3 h-3" />}
+                            </div>
+                            <span className="text-xs font-bold uppercase tracking-wider">{status.label}</span>
+                        </button>
+                    ))}
+                 </div>
+              </section>
+
+              {/* Category Filter */}
+              <section>
+                  <div className="flex items-center justify-between mb-2 mt-4 px-1">
+                    <span className="text-sm font-bold text-slate-800">Filter by Category</span>
+                    <button 
+                        onClick={() => setExportCategories(exportCategories.length === allCategories.length ? [] : allCategories)}
+                        className="text-xs text-blue-600 hover:underline"
+                    >
+                        {exportCategories.length === allCategories.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-2 pr-1 custom-scrollbar bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    {allCategories.map(cat => (
+                        <button 
+                        key={cat}
+                        onClick={() => toggleExportCategory(cat)}
+                        className="flex items-center w-full p-2 rounded-md hover:bg-white hover:shadow-sm transition-all text-left"
+                        >
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center mr-3 flex-shrink-0 transition-colors ${exportCategories.includes(cat) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                                {exportCategories.includes(cat) && <Check className="w-3 h-3 text-white" />}
+                            </div>
+                            <span className="text-sm text-slate-600 truncate">{cat}</span>
+                        </button>
+                    ))}
+                  </div>
               </section>
             </div>
 
