@@ -1,0 +1,5 @@
+{
+  "name": "SaudiCode Validator AI",
+  "description": "An intelligent engineering compliance assistant that validates design drawings against Saudi Building Codes (SBC) and technical regulations using Gemini AI.",
+  "requestFramePermissions": []
+}
